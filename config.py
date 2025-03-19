@@ -3,7 +3,7 @@ Configuration settings for the Binance Futures Trading Bot.
 """
 
 # Global settings
-TRADING_MODE = "backtest"  # "backtest", "paper", "live"
+TRADING_MODE = "paper"  # "backtest", "paper", "live"
 DEBUG_MODE = True
 LOG_LEVEL = "INFO"
 
@@ -22,6 +22,11 @@ MAX_DRAWDOWN_PERCENTAGE = 0.20    # Stop trading if 20% account drawdown reached
 MAX_OPEN_POSITIONS = 3            # Maximum number of concurrent open positions
 TRAILING_STOP_ACTIVATION = 0.02   # Activate trailing stop when 2% in profit
 TRAILING_STOP_CALLBACK = 0.008    # 0.8% trailing stop callback
+
+# Risk calculator settings
+MAX_RISK_PER_TRADE = 0.01        # 1% max risk per trade
+MAX_ACCOUNT_RISK = 0.05          # 5% max account risk overall
+MAX_POSITION_SIZE = 0.2          # 20% max position size as % of account
 
 # Scalping strategy parameters
 SCALPING_STRATEGY = {

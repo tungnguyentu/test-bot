@@ -53,12 +53,26 @@ class TradingBot:
         self.scalping_strategy = ScalpingStrategy()
         self.swing_strategy = SwingStrategy()
         
-        # Initialize trade manager and risk calculator
+        # Initialize trade manager
         self.trade_manager = TradeManager(self.binance, self.telegram)
-        self.risk_calculator = RiskCalculator()
+        
+        # Get initial account balance to initialize risk calculator
+        initial_balance = 1000.0  # Default in case we can't get the actual balance
+        try:
+            initial_balance = self.binance.get_account_balance(config.QUOTE_ASSET)
+        except Exception as e:
+            self.logger.warning(f"Could not get initial balance: {e}")
+        
+        # Initialize risk calculator
+        self.risk_calculator = RiskCalculator(
+            account_balance=initial_balance,
+            max_risk_per_trade=config.MAX_RISK_PER_TRADE,
+            max_account_risk=config.MAX_ACCOUNT_RISK,
+            max_position_size=config.MAX_POSITION_SIZE
+        )
         
         # Performance tracking
-        self.initial_balance = None
+        self.initial_balance = initial_balance
         self.start_time = None
         
         # Flag to control the main loop

@@ -392,3 +392,200 @@ class BinanceClient:
             Dict: Ticker information
         """
         return self._handle_request(self.client.get_ticker, symbol=symbol)
+    
+    def get_account_balance(self, asset: str = 'USDT') -> float:
+        """
+        Get account balance for a specific asset.
+        
+        Args:
+            asset: Asset symbol (default: USDT)
+            
+        Returns:
+            float: Account balance
+        """
+        try:
+            if self.testnet:
+                # For paper trading, return a simulated balance
+                return 10000.0  # $10,000 USDT for testing
+            
+            account_info = self._handle_request(self.client.futures_account_balance)
+            if not account_info:
+                self.logger.warning(f"Could not get account balance, using default")
+                return 1000.0  # Default fallback
+            
+            for balance in account_info:
+                if balance['asset'] == asset:
+                    return float(balance['balance'])
+            
+            self.logger.warning(f"Asset {asset} not found in account, using default")
+            return 1000.0  # Default fallback
+        except Exception as e:
+            self.logger.error(f"Error getting account balance: {e}")
+            return 1000.0  # Default fallback
+    
+    def get_latest_price(self, symbol: str) -> float:
+        """
+        Get the latest price for a symbol.
+        
+        Args:
+            symbol: Trading pair symbol
+            
+        Returns:
+            float: Latest price
+        """
+        try:
+            ticker = self._handle_request(self.client.get_symbol_ticker, symbol=symbol)
+            if ticker:
+                return float(ticker['price'])
+            return 0.0
+        except Exception as e:
+            self.logger.error(f"Error getting latest price for {symbol}: {e}")
+            return 0.0
+    
+    def open_order(self, symbol: str, side: str, quantity: float, price: Optional[float] = None) -> Dict:
+        """
+        Open a new order.
+        
+        Args:
+            symbol: Trading pair symbol
+            side: Order side (BUY or SELL)
+            quantity: Order quantity
+            price: Order price (optional, market order if None)
+            
+        Returns:
+            Dict: Order information
+        """
+        try:
+            if self.testnet:
+                # For paper trading, return a simulated order
+                order_id = f"paper_{int(time.time()*1000)}"
+                price = price or self.get_latest_price(symbol)
+                return {
+                    'orderId': order_id,
+                    'symbol': symbol,
+                    'side': side,
+                    'quantity': quantity,
+                    'price': price,
+                    'status': 'FILLED',
+                    'time': int(time.time()*1000)
+                }
+            
+            # Actual order placement logic for live trading
+            if price:
+                # Limit order
+                order = self._handle_request(
+                    self.client.futures_create_order,
+                    symbol=symbol,
+                    side=side,
+                    type='LIMIT',
+                    timeInForce='GTC',
+                    quantity=quantity,
+                    price=price
+                )
+            else:
+                # Market order
+                order = self._handle_request(
+                    self.client.futures_create_order,
+                    symbol=symbol,
+                    side=side,
+                    type='MARKET',
+                    quantity=quantity
+                )
+            
+            return order if order else {}
+        except Exception as e:
+            self.logger.error(f"Error opening order for {symbol}: {e}")
+            return {}
+    
+    def close_order(self, symbol: str, side: str, quantity: float) -> Dict:
+        """
+        Close an existing position.
+        
+        Args:
+            symbol: Trading pair symbol
+            side: Order side (BUY or SELL) - opposite of the original position
+            quantity: Order quantity
+            
+        Returns:
+            Dict: Order information
+        """
+        try:
+            if self.testnet:
+                # For paper trading, return a simulated order
+                order_id = f"paper_close_{int(time.time()*1000)}"
+                price = self.get_latest_price(symbol)
+                return {
+                    'orderId': order_id,
+                    'symbol': symbol,
+                    'side': side,
+                    'quantity': quantity,
+                    'price': price,
+                    'status': 'FILLED',
+                    'time': int(time.time()*1000)
+                }
+            
+            # Actual order placement logic for live trading
+            order = self._handle_request(
+                self.client.futures_create_order,
+                symbol=symbol,
+                side=side,
+                type='MARKET',
+                quantity=quantity,
+                reduceOnly=True
+            )
+            
+            return order if order else {}
+        except Exception as e:
+            self.logger.error(f"Error closing order for {symbol}: {e}")
+            return {}
+    
+    def get_klines(self, symbol: str, interval: str, limit: int = 100) -> pd.DataFrame:
+        """
+        Get klines/candlestick data for a symbol.
+        
+        Args:
+            symbol: Trading pair symbol
+            interval: Kline interval (e.g., '1m', '5m', '1h', '1d')
+            limit: Number of klines to get (max 1000)
+            
+        Returns:
+            pd.DataFrame: DataFrame with kline data
+        """
+        try:
+            # Get klines from Binance
+            klines = self._handle_request(
+                self.client.get_klines,
+                symbol=symbol,
+                interval=interval,
+                limit=limit
+            )
+            
+            if not klines:
+                self.logger.error(f"Failed to get klines for {symbol}")
+                return pd.DataFrame()
+            
+            # Convert to DataFrame and set column names
+            columns = [
+                'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                'close_time', 'quote_asset_volume', 'number_of_trades',
+                'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
+            ]
+            df = pd.DataFrame(klines, columns=columns)
+            
+            # Convert numeric columns
+            numeric_columns = ['open', 'high', 'low', 'close', 'volume', 
+                             'quote_asset_volume', 'taker_buy_base_asset_volume', 
+                             'taker_buy_quote_asset_volume']
+            df[numeric_columns] = df[numeric_columns].apply(pd.to_numeric)
+            
+            # Convert timestamps
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df['close_time'] = pd.to_datetime(df['close_time'], unit='ms')
+            
+            # Set timestamp as index
+            df.set_index('timestamp', inplace=True)
+            
+            return df
+        except Exception as e:
+            self.logger.error(f"Error getting klines for {symbol}: {e}")
+            return pd.DataFrame()

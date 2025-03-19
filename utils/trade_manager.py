@@ -16,15 +16,19 @@ class TradeManager:
     Tracks and manages active trades and trade history.
     """
     
-    def __init__(self, trades_dir: str = 'data/trades'):
+    def __init__(self, binance_client=None, telegram_client=None, trades_dir: str = 'data/trades'):
         """
         Initialize the TradeManager.
         
         Args:
+            binance_client: Binance client instance
+            telegram_client: Telegram client instance
             trades_dir: Directory for storing trade data
         """
         self.logger = logging.getLogger('binance_bot')
         self.trades_dir = trades_dir
+        self.binance_client = binance_client
+        self.telegram_client = telegram_client
         
         # Create trades directory if it doesn't exist
         os.makedirs(self.trades_dir, exist_ok=True)
@@ -386,3 +390,188 @@ class TradeManager:
             df['drawdown_percent'] = df['drawdown_percent'].fillna(0)
             
         return df
+    
+    def has_open_position(self, trading_pair: str) -> bool:
+        """
+        Check if there's an open position for the given trading pair.
+        
+        Args:
+            trading_pair: Trading pair to check
+            
+        Returns:
+            bool: True if open position exists, False otherwise
+        """
+        return self.has_active_trade(trading_pair)
+    
+    def open_position(self, trading_pair: str, side: str, entry_price: float, 
+                     stop_loss: float, take_profit: float, 
+                     quantity: float, strategy: str) -> Dict:
+        """
+        Open a new trading position.
+        
+        Args:
+            trading_pair: Trading pair to trade
+            side: Trade direction (BUY/SELL)
+            entry_price: Entry price
+            stop_loss: Stop loss price
+            take_profit: Take profit price
+            quantity: Trade quantity
+            strategy: Strategy used for the trade
+            
+        Returns:
+            Dict: Trade information
+        """
+        # If we have a Binance client, execute the trade
+        if self.binance_client:
+            # Here we would execute the actual trade via Binance
+            # For paper trading, we'll just simulate it
+            self.logger.info(f"Opening {side} position for {trading_pair} at {entry_price}")
+        
+        # Create the trade record
+        trade = self.create_trade(
+            symbol=trading_pair,
+            side=side,
+            entry_price=entry_price,
+            quantity=quantity,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            strategy=strategy
+        )
+        
+        # Send notification if Telegram client is available
+        if self.telegram_client:
+            message = (f"🚀 Opened {side} position for {trading_pair}\n"
+                       f"Entry: {entry_price:.2f}\n"
+                       f"Stop Loss: {stop_loss:.2f}\n"
+                       f"Take Profit: {take_profit:.2f}\n"
+                       f"Quantity: {quantity:.4f}\n"
+                       f"Strategy: {strategy}")
+            try:
+                self.telegram_client.send_message(message)
+            except Exception as e:
+                self.logger.error(f"Error sending Telegram message: {e}")
+        
+        return trade
+    
+    def close_position(self, trading_pair: str, exit_price: float, reason: str = "") -> Dict:
+        """
+        Close an existing trading position.
+        
+        Args:
+            trading_pair: Trading pair to close
+            exit_price: Exit price
+            reason: Reason for closing the position
+            
+        Returns:
+            Dict: Closed trade information
+        """
+        # If we have a Binance client, execute the trade
+        if self.binance_client:
+            # Here we would execute the actual trade via Binance
+            # For paper trading, we'll just simulate it
+            self.logger.info(f"Closing position for {trading_pair} at {exit_price}")
+        
+        # Close the trade record
+        trade = self.close_trade(
+            symbol=trading_pair,
+            exit_price=exit_price,
+            exit_reason=reason
+        )
+        
+        # Send notification if Telegram client is available
+        if trade and self.telegram_client:
+            pnl_emoji = "🟢" if trade['profit_loss'] > 0 else "🔴"
+            message = (f"{pnl_emoji} Closed position for {trading_pair}\n"
+                       f"Entry: {trade['entry_price']:.2f}\n"
+                       f"Exit: {exit_price:.2f}\n"
+                       f"P&L: {trade['profit_loss_percent']:.2f}%\n"
+                       f"Reason: {reason}")
+            try:
+                self.telegram_client.send_message(message)
+            except Exception as e:
+                self.logger.error(f"Error sending Telegram message: {e}")
+        
+        return trade if trade else {}
+    
+    def update_trailing_stops(self, trading_pair: str) -> None:
+        """
+        Update trailing stops for the given trading pair.
+        
+        Args:
+            trading_pair: Trading pair to update trailing stops for
+        """
+        trade = self.get_active_trade(trading_pair)
+        if not trade:
+            return
+        
+        # We need the current price to update trailing stops
+        current_price = 0.0
+        if self.binance_client:
+            try:
+                # Here we would get the current price from Binance
+                # For paper trading, we'll just use the last price
+                current_price = self.binance_client.get_latest_price(trading_pair)
+            except Exception as e:
+                self.logger.error(f"Error getting latest price: {e}")
+                return
+        
+        # If no price is available, can't update trailing stops
+        if current_price <= 0:
+            return
+        
+        # Check if trade has trailing stop settings
+        if 'trailing_stop_settings' not in trade:
+            return
+        
+        # Get trailing stop settings
+        settings = trade['trailing_stop_settings']
+        if not settings.get('enabled', False):
+            return
+        
+        # For buy orders, price should be above entry
+        # For sell orders, price should be below entry
+        profit_threshold_met = False
+        if trade['side'] == 'BUY':
+            profit_percent = ((current_price / trade['entry_price']) - 1) * 100
+            profit_threshold_met = profit_percent >= settings.get('activation_pct', 0)
+        else:
+            profit_percent = ((trade['entry_price'] / current_price) - 1) * 100
+            profit_threshold_met = profit_percent >= settings.get('activation_pct', 0)
+        
+        # If profit threshold is met, activate or update trailing stop
+        if profit_threshold_met:
+            if not settings.get('trailing_started', False):
+                # Activate trailing stop
+                settings['trailing_started'] = True
+                settings['trailing_reference'] = current_price
+                self.logger.info(f"Activated trailing stop for {trading_pair} at {current_price}")
+            else:
+                # Update trailing stop if price has moved in favorable direction
+                if (trade['side'] == 'BUY' and current_price > settings['trailing_reference']) or \
+                   (trade['side'] == 'SELL' and current_price < settings['trailing_reference']):
+                    settings['trailing_reference'] = current_price
+                    self.logger.debug(f"Updated trailing reference for {trading_pair} to {current_price}")
+                
+                # Calculate trailing stop level
+                step_pct = settings.get('step_pct', 1.0)
+                if trade['side'] == 'BUY':
+                    stop_price = current_price * (1 - step_pct/100)
+                    # If stop price is now higher than current stop loss, update it
+                    if stop_price > trade['stop_loss']:
+                        self.update_trade(trading_pair, stop_loss=stop_price)
+                        self.logger.info(f"Updated trailing stop for {trading_pair} to {stop_price}")
+                else:
+                    stop_price = current_price * (1 + step_pct/100)
+                    # If stop price is now lower than current stop loss, update it
+                    if stop_price < trade['stop_loss']:
+                        self.update_trade(trading_pair, stop_loss=stop_price)
+                        self.logger.info(f"Updated trailing stop for {trading_pair} to {stop_price}")
+    
+    def get_open_positions(self) -> Dict[str, Dict]:
+        """
+        Get all open positions.
+        
+        Returns:
+            Dict[str, Dict]: Dictionary of open positions
+        """
+        return self.get_all_active_trades()
